@@ -1,0 +1,835 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Golf Logger</title>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <link rel="manifest" href="manifest.json">
+  <style>
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      font-family: -apple-system, system-ui, sans-serif;
+      margin: 0;
+      padding: 16px;
+      background: #f4f6f4;
+      color: #1a1a1a;
+      max-width: 600px;
+      margin-left: auto;
+      margin-right: auto;
+    }
+
+    h1 {
+      font-size: 22px;
+      margin: 0 0 16px 0;
+      color: #1e7a3c;
+    }
+
+    h2 {
+      font-size: 18px;
+      margin: 12px 0;
+    }
+
+    h3 {
+      font-size: 16px;
+      margin: 20px 0 8px 0;
+      color: #555;
+    }
+
+    button {
+      font-size: 16px;
+      padding: 14px 18px;
+      margin: 4px 4px 4px 0;
+      border: none;
+      border-radius: 8px;
+      background: #1e7a3c;
+      color: white;
+      cursor: pointer;
+      min-width: 60px;
+    }
+
+    button:active {
+      background: #155a2c;
+    }
+
+    #holeControls button {
+      background: #555;
+      font-size: 14px;
+      padding: 10px 12px;
+    }
+
+    #holeControls button:active {
+      background: #333;
+    }
+
+    #actionArea {
+      background: white;
+      padding: 16px;
+      border-radius: 12px;
+      margin: 12px 0;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+    }
+
+    #actionArea p {
+      margin: 0 0 10px 0;
+      font-weight: 600;
+      font-size: 15px;
+    }
+
+    #toggleArea {
+      margin: 8px 0;
+      font-size: 15px;
+    }
+
+    #toggleArea input {
+      transform: scale(1.4);
+      margin-right: 8px;
+      vertical-align: middle;
+    }
+
+    ul {
+      list-style: none;
+      padding: 0;
+      margin: 8px 0;
+    }
+
+    li {
+      background: white;
+      padding: 10px 12px;
+      margin: 4px 0;
+      border-radius: 6px;
+      font-size: 14px;
+      box-shadow: 0 1px 2px rgba(0,0,0,0.05);
+    }
+
+    #gpsStatus {
+      font-size: 13px;
+      color: #666;
+      margin: 8px 0;
+      font-style: italic;
+    }
+
+    hr {
+      border: none;
+      border-top: 1px solid #ddd;
+      margin: 24px 0;
+    }
+
+    #archiveList li button {
+      background: #b34141;
+      font-size: 13px;
+      padding: 6px 10px;
+      margin-left: 8px;
+    }
+
+    #archiveList li button:active {
+      background: #8a2f2f;
+    }
+
+    #viewer {
+      margin-top: 16px;
+    }
+  </style>
+</head>
+<body>
+<h1>Golf Logger</h1>
+
+<div id="holeHeader">
+  <h2 id="holeTitle">Hole 1 — Par 4</h2>
+</div>
+
+<div id="toggleArea">
+  <label>
+    <input type="checkbox" id="goingForGreen"> Going for green
+  </label>
+</div>
+
+<div id="actionArea">
+  <button onclick="shotTaken()">Shot taken</button>
+</div>
+
+<div id="holeControls">
+  <button onclick="undoLastShot()">Undo last shot</button>
+  <button onclick="skipHole()">Skip hole</button>
+  <button onclick="finishHole()">Finish hole</button>
+  <button onclick="backToPreviousHole()">Back to previous hole</button>
+  <button onclick="completeRound()">Round complete</button>
+  <button onclick="exportRounds()">Export rounds</button>
+  <button onclick="clearStoredRound()">Clear current round</button>
+</div>
+
+<p id="gpsStatus"></p>
+
+<ul id="shotList"></ul>
+
+<hr>
+
+<h3>Round so far</h3>
+<ul id="roundList"></ul>
+
+<hr>
+
+<h3>Archived rounds</h3>
+<p id="archiveSummary">No rounds completed yet.</p>
+<ul id="archiveList"></ul>
+
+<hr>
+
+<div id="viewer">
+  <h3 id="viewerTitle">Viewer</h3>
+  <div id="viewerControls"></div>
+  <div id="viewerContent"></div>
+</div>
+
+<script>
+  const COURSE_PARS = [4, 3, 5, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4];
+  const STORAGE_KEY = "golfLoggerState";
+  const HISTORY_KEY = "golfLoggerHistory";
+
+  let currentHoleNumber = 1;
+  let shots = [];
+  let pendingShot = null;
+  let completedHoles = [];
+  let roundHistory = [];
+
+  let viewerLevel = "rounds";
+  let viewerRoundIndex = null;
+  let viewerHoleIndex = null;
+
+  function currentPar() {
+    return COURSE_PARS[currentHoleNumber - 1];
+  }
+
+  function saveState() {
+    const state = {
+      currentHoleNumber: currentHoleNumber,
+      shots: shots,
+      completedHoles: completedHoles
+    };
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+    } catch (e) {
+      console.error("Save failed:", e);
+    }
+  }
+
+  function saveHistory() {
+    try {
+      localStorage.setItem(HISTORY_KEY, JSON.stringify(roundHistory));
+    } catch (e) {
+      console.error("History save failed:", e);
+    }
+  }
+
+  function loadState() {
+    try {
+      const raw = localStorage.getItem(STORAGE_KEY);
+      if (raw) {
+        const state = JSON.parse(raw);
+        currentHoleNumber = state.currentHoleNumber || 1;
+        shots = state.shots || [];
+        completedHoles = state.completedHoles || [];
+      }
+      const histRaw = localStorage.getItem(HISTORY_KEY);
+      if (histRaw) {
+        roundHistory = JSON.parse(histRaw) || [];
+      }
+    } catch (e) {
+      console.error("Load failed:", e);
+    }
+  }
+
+  function clearStoredRound() {
+    if (!confirm("Delete the current round and start fresh? Archived rounds will NOT be affected.")) return;
+    localStorage.removeItem(STORAGE_KEY);
+    currentHoleNumber = 1;
+    shots = [];
+    pendingShot = null;
+    completedHoles = [];
+    document.getElementById("goingForGreen").checked = false;
+    document.getElementById("gpsStatus").textContent = "";
+    updateHoleHeader();
+    resetActionArea();
+    render();
+    renderRound();
+  }
+
+  function completeRound() {
+    if (completedHoles.length === 0 && shots.length === 0) {
+      alert("No holes to archive.");
+      return;
+    }
+    const holesToArchive = completedHoles.slice();
+    if (shots.length > 0) {
+      if (!confirm("Hole " + currentHoleNumber + " is in progress. Finish it before completing the round, or it will be discarded.\n\nDiscard hole " + currentHoleNumber + " and complete round?")) return;
+    }
+    if (!confirm("Archive this round (" + holesToArchive.length + " holes) and start fresh?")) return;
+
+    const round = {
+      roundNumber: roundHistory.length + 1,
+      completedAt: new Date().toISOString(),
+      coursePars: COURSE_PARS.slice(),
+      holes: holesToArchive
+    };
+    roundHistory.push(round);
+    saveHistory();
+
+    currentHoleNumber = 1;
+    shots = [];
+    pendingShot = null;
+    completedHoles = [];
+    document.getElementById("goingForGreen").checked = false;
+    document.getElementById("gpsStatus").textContent = "";
+    saveState();
+    updateHoleHeader();
+    resetActionArea();
+    render();
+    renderRound();
+    renderArchive();
+    renderViewer();
+  }
+
+  function exportRounds() {
+    if (roundHistory.length === 0) {
+      alert("No archived rounds to export.");
+      return;
+    }
+    const payload = {
+      exportedAt: new Date().toISOString(),
+      rounds: roundHistory
+    };
+    const text = JSON.stringify(payload, null, 2);
+    const blob = new Blob([text], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    const dateStr = new Date().toISOString().slice(0, 10);
+    a.href = url;
+    a.download = "golf_rounds_" + dateStr + ".json";
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  }
+
+  function deleteArchivedRound(roundIndex) {
+    const round = roundHistory[roundIndex];
+    if (!confirm("Delete round " + round.roundNumber + " (completed " + new Date(round.completedAt).toLocaleString() + ")?\n\nThis cannot be undone.")) return;
+    if (!confirm("Really sure? Round " + round.roundNumber + " will be permanently deleted.")) return;
+    roundHistory.splice(roundIndex, 1);
+    saveHistory();
+    renderArchive();
+    viewerLevel = "rounds";
+    viewerRoundIndex = null;
+    viewerHoleIndex = null;
+    renderViewer();
+  }
+
+  function shotTaken() {
+    pendingShot = {
+      index: shots.length + 1,
+      lie: null,
+      missDirection: null,
+      gps: null,
+      distanceBucket: null,
+      puttsTaken: null,
+      goingForGreen: document.getElementById("goingForGreen").checked
+    };
+    showLieButtons();
+  }
+
+  function showLieButtons() {
+    const area = document.getElementById("actionArea");
+    area.innerHTML = "<p>Lie?</p>";
+    const lies = ["tee", "fairway", "rough", "sand", "green"];
+    for (let i = 0; i < lies.length; i++) {
+      const btn = document.createElement("button");
+      btn.textContent = lies[i];
+      btn.onclick = function() { setLie(lies[i]); };
+      area.appendChild(btn);
+    }
+  }
+
+  function setLie(lie) {
+    pendingShot.lie = lie;
+    const isTeeShot = pendingShot.index === 1;
+    const needsMissDirection = isTeeShot || pendingShot.goingForGreen;
+    if (needsMissDirection) showMissButtons();
+    else afterMissStep();
+  }
+
+  function showMissButtons() {
+    const area = document.getElementById("actionArea");
+    area.innerHTML = "<p>Miss direction?</p>";
+    const misses = ["Left", "Right", "Long", "Short", "N/A", "Straight"];
+    for (let i = 0; i < misses.length; i++) {
+      const btn = document.createElement("button");
+      btn.textContent = misses[i];
+      btn.onclick = function() { setMiss(misses[i]); };
+      area.appendChild(btn);
+    }
+  }
+
+  function setMiss(miss) {
+    pendingShot.missDirection = miss;
+    afterMissStep();
+  }
+
+  function afterMissStep() {
+    const previousLie = shots.length > 0 ? shots[shots.length - 1].lie : null;
+    const justArrivedOnGreen = pendingShot.lie === "green" && previousLie !== "green";
+    if (justArrivedOnGreen) showDistanceButtons();
+    else commitShot();
+  }
+
+  function showDistanceButtons() {
+    const area = document.getElementById("actionArea");
+    area.innerHTML = "<p>Distance to hole?</p>";
+    const buckets = ["<3ft", "3–8ft", "8–20ft", "20–40ft", "40ft+"];
+    for (let i = 0; i < buckets.length; i++) {
+      const btn = document.createElement("button");
+      btn.textContent = buckets[i];
+      btn.onclick = function() { setDistance(buckets[i]); };
+      area.appendChild(btn);
+    }
+  }
+
+  function setDistance(bucket) {
+    pendingShot.distanceBucket = bucket;
+    showPuttsButtons();
+  }
+
+  function showPuttsButtons() {
+    const area = document.getElementById("actionArea");
+    area.innerHTML = "<p>Putts taken?</p>";
+    const putts = [1, 2, 3, 4, 5];
+    for (let i = 0; i < putts.length; i++) {
+      const btn = document.createElement("button");
+      btn.textContent = putts[i];
+      btn.onclick = function() { setPutts(putts[i]); };
+      area.appendChild(btn);
+    }
+  }
+
+  function setPutts(n) {
+    pendingShot.puttsTaken = n;
+    commitShot();
+  }
+
+  function commitShot() {
+    if (pendingShot.lie !== "green") {
+      captureGPS(function() { finaliseCommit(); });
+    } else {
+      finaliseCommit();
+    }
+  }
+
+  function captureGPS(done) {
+    const status = document.getElementById("gpsStatus");
+    if (!navigator.geolocation) {
+      status.textContent = "GPS not available on this device.";
+      done();
+      return;
+    }
+    const ACCURACY_THRESHOLD_M = 8;
+    const MAX_WAIT_MS = 15000;
+    status.textContent = "Acquiring GPS...";
+    let bestReading = null;
+    let watchId = null;
+    let finished = false;
+    function finish(reading, label) {
+      if (finished) return;
+      finished = true;
+      if (watchId !== null) navigator.geolocation.clearWatch(watchId);
+      if (reading) {
+        pendingShot.gps = {
+          lat: reading.coords.latitude,
+          lng: reading.coords.longitude,
+          accuracy: reading.coords.accuracy
+        };
+        status.textContent = "GPS " + label + " (±" + reading.coords.accuracy.toFixed(1) + "m)";
+      } else {
+        status.textContent = "GPS failed.";
+      }
+      done();
+    }
+    watchId = navigator.geolocation.watchPosition(
+      function(position) {
+        const acc = position.coords.accuracy;
+        if (!bestReading || acc < bestReading.coords.accuracy) bestReading = position;
+        status.textContent = "Acquiring GPS... ±" + acc.toFixed(1) + "m";
+        if (acc <= ACCURACY_THRESHOLD_M) finish(position, "captured");
+      },
+      function(error) { finish(null, "error: " + error.message); },
+      { enableHighAccuracy: true, maximumAge: 0, timeout: MAX_WAIT_MS }
+    );
+    setTimeout(function() {
+      if (!finished) finish(bestReading, "best available");
+    }, MAX_WAIT_MS);
+  }
+
+  function finaliseCommit() {
+    shots.push(pendingShot);
+    pendingShot = null;
+    document.getElementById("goingForGreen").checked = false;
+    resetActionArea();
+    render();
+    saveState();
+  }
+
+  function resetActionArea() {
+    const area = document.getElementById("actionArea");
+    area.innerHTML = '<button onclick="shotTaken()">Shot taken</button>';
+  }
+
+  function undoLastShot() {
+    if (pendingShot) {
+      pendingShot = null;
+      document.getElementById("goingForGreen").checked = false;
+      resetActionArea();
+      return;
+    }
+    if (shots.length === 0) return;
+    shots.pop();
+    render();
+    saveState();
+  }
+
+  function skipHole() {
+    if (!confirm("Clear all shots for this hole and skip?")) return;
+    completedHoles.push({
+      holeNumber: currentHoleNumber,
+      par: currentPar(),
+      skipped: true,
+      shots: []
+    });
+    advanceHole();
+    saveState();
+  }
+
+  function deriveHoleStats() {
+    let score = 0;
+    let putts = 0;
+    for (let i = 0; i < shots.length; i++) {
+      const s = shots[i];
+      const strokes = s.puttsTaken ? s.puttsTaken : 1;
+      score += strokes;
+      if (s.lie === "green") putts += s.puttsTaken ? s.puttsTaken : 1;
+    }
+    const par = currentPar();
+    const GIR = (score - putts) <= (par - 2);
+    return { score: score, putts: putts, par: par, GIR: GIR };
+  }
+
+  function finishHole() {
+    if (shots.length === 0) {
+      alert("No shots logged on this hole. Use Skip hole instead.");
+      return;
+    }
+    const stats = deriveHoleStats();
+    const msg =
+      "Hole " + currentHoleNumber + " (Par " + stats.par + ")\n" +
+      "Score: " + stats.score + "\n" +
+      "Putts: " + stats.putts + "\n" +
+      "GIR: " + (stats.GIR ? "yes" : "no") + "\n\n" +
+      "Confirm and move to next hole?";
+    if (!confirm(msg)) return;
+
+    completedHoles.push({
+      holeNumber: currentHoleNumber,
+      par: stats.par,
+      skipped: false,
+      score: stats.score,
+      putts: stats.putts,
+      GIR: stats.GIR,
+      shots: shots.slice()
+    });
+    advanceHole();
+    saveState();
+  }
+
+  function backToPreviousHole() {
+    if (completedHoles.length === 0) {
+      alert("No previous hole to go back to.");
+      return;
+    }
+    if (shots.length > 0 || pendingShot) {
+      if (!confirm("Going back will discard the shots logged on the current hole. Continue?")) return;
+    }
+    const previous = completedHoles.pop();
+    currentHoleNumber = previous.holeNumber;
+    shots = previous.skipped ? [] : previous.shots.slice();
+    pendingShot = null;
+    document.getElementById("goingForGreen").checked = false;
+    document.getElementById("gpsStatus").textContent = "";
+    updateHoleHeader();
+    resetActionArea();
+    render();
+    renderRound();
+    saveState();
+  }
+
+  function advanceHole() {
+    if (currentHoleNumber >= 18) {
+      alert("Hole 18 finished. Tap 'Round complete' when ready to archive the round.");
+      shots = [];
+      pendingShot = null;
+      updateHoleHeader();
+      resetActionArea();
+      render();
+      renderRound();
+      saveState();
+      return;
+    }
+    currentHoleNumber += 1;
+    shots = [];
+    pendingShot = null;
+    document.getElementById("goingForGreen").checked = false;
+    document.getElementById("gpsStatus").textContent = "";
+    updateHoleHeader();
+    resetActionArea();
+    render();
+    renderRound();
+    saveState();
+  }
+
+  function updateHoleHeader() {
+    document.getElementById("holeTitle").textContent =
+      "Hole " + currentHoleNumber + " — Par " + currentPar();
+  }
+
+  function render() {
+    const list = document.getElementById("shotList");
+    list.innerHTML = "";
+    for (let i = 0; i < shots.length; i++) {
+      const shot = shots[i];
+      const item = document.createElement("li");
+      let label = "Shot " + shot.index;
+      if (shot.puttsTaken && shot.puttsTaken > 1) {
+        for (let j = 1; j < shot.puttsTaken; j++) {
+          label += " & " + (shot.index + j);
+        }
+      }
+      const gpsText = shot.gps
+        ? "[" + shot.gps.lat.toFixed(5) + ", " + shot.gps.lng.toFixed(5) + "]"
+        : "no GPS";
+      item.textContent =
+        label +
+        " — lie: " + shot.lie +
+        ", miss: " + shot.missDirection +
+        ", distance: " + shot.distanceBucket +
+        ", putts: " + shot.puttsTaken +
+        ", gps: " + gpsText;
+      list.appendChild(item);
+    }
+  }
+
+  function renderRound() {
+    const list = document.getElementById("roundList");
+    list.innerHTML = "";
+    for (let i = 0; i < completedHoles.length; i++) {
+      const h = completedHoles[i];
+      const item = document.createElement("li");
+      if (h.skipped) {
+        item.textContent = "Hole " + h.holeNumber + " — skipped";
+      } else {
+        item.textContent =
+          "Hole " + h.holeNumber +
+          " (Par " + h.par + "): score " + h.score +
+          ", putts " + h.putts +
+          ", GIR " + (h.GIR ? "yes" : "no");
+      }
+      list.appendChild(item);
+    }
+  }
+
+  function renderArchive() {
+    const summary = document.getElementById("archiveSummary");
+    const list = document.getElementById("archiveList");
+    list.innerHTML = "";
+
+    if (roundHistory.length === 0) {
+      summary.textContent = "No rounds completed yet.";
+      return;
+    }
+    summary.textContent = roundHistory.length + " round(s) archived. Tap 'Export rounds' to download.";
+
+    for (let i = 0; i < roundHistory.length; i++) {
+      const r = roundHistory[i];
+      const item = document.createElement("li");
+      const date = new Date(r.completedAt).toLocaleString();
+      item.textContent = "Round " + r.roundNumber + " — " + r.holes.length + " holes — " + date + " ";
+
+      const delBtn = document.createElement("button");
+      delBtn.textContent = "Delete";
+      delBtn.onclick = (function(idx) { return function() { deleteArchivedRound(idx); }; })(i);
+      item.appendChild(delBtn);
+
+      list.appendChild(item);
+    }
+  }
+
+  function renderViewer() {
+    if (viewerLevel === "rounds") renderViewerRounds();
+    else if (viewerLevel === "holes") renderViewerHoles();
+    else if (viewerLevel === "shots") renderViewerShots();
+  }
+
+  function renderViewerRounds() {
+    const title = document.getElementById("viewerTitle");
+    const controls = document.getElementById("viewerControls");
+    const content = document.getElementById("viewerContent");
+    title.textContent = "Viewer — Rounds";
+    controls.innerHTML = "";
+    content.innerHTML = "";
+
+    if (roundHistory.length === 0) {
+      content.textContent = "No archived rounds to view.";
+      return;
+    }
+
+    const list = document.createElement("ul");
+    for (let i = 0; i < roundHistory.length; i++) {
+      const r = roundHistory[i];
+      const totalScore = roundTotalScore(r);
+      const item = document.createElement("li");
+      const btn = document.createElement("button");
+      btn.textContent = "Round " + r.roundNumber + " — " + r.holes.length + " holes — total " + totalScore;
+      btn.onclick = (function(idx) {
+        return function() {
+          viewerRoundIndex = idx;
+          viewerLevel = "holes";
+          renderViewer();
+        };
+      })(i);
+      item.appendChild(btn);
+      list.appendChild(item);
+    }
+    content.appendChild(list);
+  }
+
+  function renderViewerHoles() {
+    const title = document.getElementById("viewerTitle");
+    const controls = document.getElementById("viewerControls");
+    const content = document.getElementById("viewerContent");
+    const r = roundHistory[viewerRoundIndex];
+    title.textContent = "Viewer — Round " + r.roundNumber;
+    controls.innerHTML = "";
+    content.innerHTML = "";
+
+    const back = document.createElement("button");
+    back.textContent = "← Back to rounds";
+    back.onclick = function() {
+      viewerLevel = "rounds";
+      viewerRoundIndex = null;
+      renderViewer();
+    };
+    controls.appendChild(back);
+
+    const list = document.createElement("ul");
+    for (let i = 0; i < r.holes.length; i++) {
+      const h = r.holes[i];
+      const item = document.createElement("li");
+      const btn = document.createElement("button");
+      if (h.skipped) {
+        btn.textContent = "Hole " + h.holeNumber + " — skipped";
+      } else {
+        btn.textContent =
+          "Hole " + h.holeNumber +
+          " (Par " + h.par + ") — score " + h.score +
+          ", putts " + h.putts +
+          ", GIR " + (h.GIR ? "yes" : "no");
+      }
+      btn.onclick = (function(idx) {
+        return function() {
+          viewerHoleIndex = idx;
+          viewerLevel = "shots";
+          renderViewer();
+        };
+      })(i);
+      item.appendChild(btn);
+      list.appendChild(item);
+    }
+    content.appendChild(list);
+  }
+
+  function renderViewerShots() {
+    const title = document.getElementById("viewerTitle");
+    const controls = document.getElementById("viewerControls");
+    const content = document.getElementById("viewerContent");
+    const r = roundHistory[viewerRoundIndex];
+    const h = r.holes[viewerHoleIndex];
+    title.textContent = "Viewer — Round " + r.roundNumber + ", Hole " + h.holeNumber;
+    controls.innerHTML = "";
+    content.innerHTML = "";
+
+    const back = document.createElement("button");
+    back.textContent = "← Back to holes";
+    back.onclick = function() {
+      viewerLevel = "holes";
+      viewerHoleIndex = null;
+      renderViewer();
+    };
+    controls.appendChild(back);
+
+    if (h.skipped) {
+      const p = document.createElement("p");
+      p.textContent = "This hole was skipped.";
+      content.appendChild(p);
+      return;
+    }
+
+    const summary = document.createElement("p");
+    summary.textContent = "Par " + h.par + " — score " + h.score + ", putts " + h.putts + ", GIR " + (h.GIR ? "yes" : "no");
+    content.appendChild(summary);
+
+    const list = document.createElement("ul");
+    for (let i = 0; i < h.shots.length; i++) {
+      const shot = h.shots[i];
+      const item = document.createElement("li");
+      let label = "Shot " + shot.index;
+      if (shot.puttsTaken && shot.puttsTaken > 1) {
+        for (let j = 1; j < shot.puttsTaken; j++) {
+          label += " & " + (shot.index + j);
+        }
+      }
+      const gpsText = shot.gps
+        ? "[" + shot.gps.lat.toFixed(5) + ", " + shot.gps.lng.toFixed(5) + "]"
+        : "no GPS";
+      item.textContent =
+        label +
+        " — lie: " + shot.lie +
+        ", miss: " + shot.missDirection +
+        ", distance: " + shot.distanceBucket +
+        ", putts: " + shot.puttsTaken +
+        ", gps: " + gpsText;
+      list.appendChild(item);
+    }
+    content.appendChild(list);
+  }
+
+  function roundTotalScore(r) {
+    let total = 0;
+    for (let i = 0; i < r.holes.length; i++) {
+      const h = r.holes[i];
+      if (!h.skipped && h.score) total += h.score;
+    }
+    return total;
+  }
+
+  loadState();
+  updateHoleHeader();
+  render();
+  renderRound();
+  renderArchive();
+  renderViewer();
+
+  if ("serviceWorker" in navigator) {
+  navigator.serviceWorker.register("service-worker.js")
+    .then(function() { console.log("Service worker registered."); })
+    .catch(function(err) { console.error("Service worker registration failed:", err); });
+}
+</script>
+</body>
+</html>
