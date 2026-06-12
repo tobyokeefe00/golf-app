@@ -124,6 +124,17 @@
       margin-left: 8px;
     }
 
+    #shotList li button {
+      background: #777;
+      font-size: 12px;
+      padding: 4px 8px;
+      margin-left: 8px;
+    }
+
+    #shotList li button:active {
+      background: #555;
+    }
+
     #archiveList li button:active {
       background: #8a2f2f;
     }
@@ -131,10 +142,33 @@
     #viewer {
       margin-top: 16px;
     }
+
+    #courseSelector {
+      margin-bottom: 12px;
+      font-size: 15px;
+    }
+
+    #courseSelector select {
+      font-size: 15px;
+      padding: 8px 10px;
+      border-radius: 6px;
+      border: 1px solid #ccc;
+      background: white;
+      color: #1a1a1a;
+      min-width: 200px;
+      font-family: inherit;
+      -webkit-appearance: menulist;
+      appearance: menulist;
+    }
   </style>
 </head>
 <body>
 <h1>Golf Logger</h1>
+
+<div id="courseSelector">
+  <label for="courseDropdown">Course: </label>
+  <select id="courseDropdown" onchange="onCourseChange()"></select>
+</div>
 
 <div id="holeHeader">
   <h2 id="holeTitle">Hole 1 — Par 4</h2>
@@ -184,7 +218,57 @@
 </div>
 
 <script>
-  const COURSE_PARS = [4, 3, 5, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4];
+  const COURSES = {
+    "macclesfield": {
+      name: "Macclesfield",
+      pars: [4, 4, 4, 4, 3, 4, 4, 4, 5, 5, 4, 4, 4, 3, 4, 4, 4, 3],
+      greens: [
+        { lat: 53.249314943091896, lng: -2.111529890594671 },
+        { lat: 53.24673579603056,  lng: -2.1091796684349933 },
+        { lat: 53.24945572607717,  lng: -2.1068592734454867 },
+        { lat: 53.2469055672033,   lng: -2.104471660236993 },
+        { lat: 53.24673410138266,  lng: -2.1054881874409723 },
+        { lat: 53.245628627684695, lng: -2.10337707412867 },
+        { lat: 53.24586346798132,  lng: -2.106805086029592 },
+        { lat: 53.249005673103795, lng: -2.106458994804569 },
+        { lat: 53.246093180613414, lng: -2.1092001278939985 },
+        { lat: 53.24992979780326,  lng: -2.113344696151637 },
+        { lat: 53.24593994373494,  lng: -2.1120780849851832 },
+        { lat: 53.24372017502755,  lng: -2.108894926820299 },
+        { lat: 53.24545878348283,  lng: -2.1114264880337275 },
+        { lat: 53.24413300364217,  lng: -2.111962511879534 },
+        { lat: 53.245824200442065, lng: -2.113328081710412 },
+        { lat: 53.2475753374784,   lng: -2.1148127564945907 },
+        { lat: 53.25051943170176,  lng: -2.114995074100283 },
+        { lat: 53.251186340702624, lng: -2.11172169862313 }
+      ]
+    },
+    "tytherington": {
+      name: "Tytherington",
+      pars: [4, 5, 3, 4, 3, 4, 4, 4, 5, 4, 3, 5, 3, 4, 4, 5, 4, 4],
+      greens: [
+        { lat: 53.282389368256204, lng: -2.1379603887437493 },
+        { lat: 53.279117779551264, lng: -2.140954969374474 },
+        { lat: 53.27796615144167,  lng: -2.1414592437968216 },
+        { lat: 53.28083570906888,  lng: -2.1431873704584734 },
+        { lat: 53.282819722273665, lng: -2.1409748278170784 },
+        { lat: 53.28504396135342,  lng: -2.137972981855587 },
+        { lat: 53.28378009156448,  lng: -2.1415726810482267 },
+        { lat: 53.28381508663466,  lng: -2.135976702857489 },
+        { lat: 53.283286916772916, lng: -2.1310289971536425 },
+        { lat: 53.28476932666016,  lng: -2.134370154531944 },
+        { lat: 53.28483154090008,  lng: -2.1359910920443346 },
+        { lat: 53.28601653845973,  lng: -2.1311559766888597 },
+        { lat: 53.28684016757225,  lng: -2.1318591558737627 },
+        { lat: 53.285826874343286, lng: -2.1379005661837045 },
+        { lat: 53.28493535546909,  lng: -2.143608529493648 },
+        { lat: 53.2813184465762,   lng: -2.142572279228676 },
+        { lat: 53.28288098580713,  lng: -2.13791546495178 },
+        { lat: 53.28310886740601,  lng: -2.1320412199994663 }
+      ]
+    }
+  };
+  let currentCourseId = "macclesfield";
   const STORAGE_KEY = "golfLoggerState";
   const HISTORY_KEY = "golfLoggerHistory";
 
@@ -194,16 +278,25 @@
   let completedHoles = [];
   let roundHistory = [];
 
+  let currentPosition = null;
+  let gpsWatchId = null;
+  let gpsActive = false;
+
   let viewerLevel = "rounds";
   let viewerRoundIndex = null;
   let viewerHoleIndex = null;
 
   function currentPar() {
-    return COURSE_PARS[currentHoleNumber - 1];
+    return COURSES[currentCourseId].pars[currentHoleNumber - 1];
+  }
+
+  function currentGreen() {
+    return COURSES[currentCourseId].greens[currentHoleNumber - 1];
   }
 
   function saveState() {
     const state = {
+      currentCourseId: currentCourseId,  
       currentHoleNumber: currentHoleNumber,
       shots: shots,
       completedHoles: completedHoles
@@ -228,6 +321,7 @@
       const raw = localStorage.getItem(STORAGE_KEY);
       if (raw) {
         const state = JSON.parse(raw);
+        currentCourseId = state.currentCourseId || "home";
         currentHoleNumber = state.currentHoleNumber || 1;
         shots = state.shots || [];
         completedHoles = state.completedHoles || [];
@@ -270,7 +364,8 @@
     const round = {
       roundNumber: roundHistory.length + 1,
       completedAt: new Date().toISOString(),
-      coursePars: COURSE_PARS.slice(),
+      courseId: currentCourseId,
+      coursePars: COURSES[currentCourseId].pars.slice(),
       holes: holesToArchive
     };
     roundHistory.push(round);
@@ -327,11 +422,15 @@
   }
 
   function shotTaken() {
+    const snapshot = snapshotGPS();
+    const d = distanceToGreenYards();
     pendingShot = {
       index: shots.length + 1,
       lie: null,
       missDirection: null,
-      gps: null,
+      gps: snapshot,
+      distanceToGreen: d !== null ? Math.round(d) : null,
+      distanceSource: d !== null ? "gps" : null,
       distanceBucket: null,
       puttsTaken: null,
       goingForGreen: document.getElementById("goingForGreen").checked
@@ -418,55 +517,87 @@
   }
 
   function commitShot() {
-    if (pendingShot.lie !== "green") {
-      captureGPS(function() { finaliseCommit(); });
-    } else {
-      finaliseCommit();
+    if (pendingShot.lie === "green") {
+      pendingShot.gps = null;
+      pendingShot.distanceToGreen = null;
+      pendingShot.distanceSource = null;
     }
+    finaliseCommit();
   }
 
-  function captureGPS(done) {
+  function startGPS() {
     const status = document.getElementById("gpsStatus");
     if (!navigator.geolocation) {
       status.textContent = "GPS not available on this device.";
-      done();
       return;
     }
-    const ACCURACY_THRESHOLD_M = 8;
-    const MAX_WAIT_MS = 15000;
+    if (gpsActive) return;
+    gpsActive = true;
     status.textContent = "Acquiring GPS...";
-    let bestReading = null;
-    let watchId = null;
-    let finished = false;
-    function finish(reading, label) {
-      if (finished) return;
-      finished = true;
-      if (watchId !== null) navigator.geolocation.clearWatch(watchId);
-      if (reading) {
-        pendingShot.gps = {
-          lat: reading.coords.latitude,
-          lng: reading.coords.longitude,
-          accuracy: reading.coords.accuracy
-        };
-        status.textContent = "GPS " + label + " (±" + reading.coords.accuracy.toFixed(1) + "m)";
-      } else {
-        status.textContent = "GPS failed.";
-      }
-      done();
-    }
-    watchId = navigator.geolocation.watchPosition(
+
+    gpsWatchId = navigator.geolocation.watchPosition(
       function(position) {
-        const acc = position.coords.accuracy;
-        if (!bestReading || acc < bestReading.coords.accuracy) bestReading = position;
-        status.textContent = "Acquiring GPS... ±" + acc.toFixed(1) + "m";
-        if (acc <= ACCURACY_THRESHOLD_M) finish(position, "captured");
+        currentPosition = {
+          lat: position.coords.latitude,
+          lng: position.coords.longitude,
+          accuracy: position.coords.accuracy,
+          timestamp: position.timestamp
+        };
+        updateGPSStatus();
       },
-      function(error) { finish(null, "error: " + error.message); },
-      { enableHighAccuracy: true, maximumAge: 0, timeout: MAX_WAIT_MS }
+      function(error) {
+        status.textContent = "GPS error: " + error.message;
+      },
+      { enableHighAccuracy: true, maximumAge: 0, timeout: 20000 }
     );
-    setTimeout(function() {
-      if (!finished) finish(bestReading, "best available");
-    }, MAX_WAIT_MS);
+  }
+
+  function stopGPS() {
+    if (gpsWatchId !== null) {
+      navigator.geolocation.clearWatch(gpsWatchId);
+      gpsWatchId = null;
+    }
+    gpsActive = false;
+  }
+
+  function updateGPSStatus() {
+    const status = document.getElementById("gpsStatus");
+    if (!currentPosition) {
+      status.textContent = "GPS: waiting...";
+      return;
+    }
+    status.textContent = "GPS: ±" + currentPosition.accuracy.toFixed(1) + "m";
+    updateHoleHeader();
+  }
+
+  function snapshotGPS() {
+    if (!currentPosition) return null;
+    return {
+      lat: currentPosition.lat,
+      lng: currentPosition.lng,
+      accuracy: currentPosition.accuracy,
+      timestamp: currentPosition.timestamp
+    };
+  }
+
+  function haversineYards(lat1, lng1, lat2, lng2) {
+    const R = 6371000;
+    const toRad = function(deg) { return deg * Math.PI / 180; };
+    const dLat = toRad(lat2 - lat1);
+    const dLng = toRad(lng2 - lng1);
+    const a = Math.sin(dLat/2) * Math.sin(dLat/2) +
+              Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) *
+              Math.sin(dLng/2) * Math.sin(dLng/2);
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+    const metres = R * c;
+    return metres * 1.09361;
+  }
+
+  function distanceToGreenYards() {
+    if (!currentPosition) return null;
+    const green = currentGreen();
+    if (!green) return null;
+    return haversineYards(currentPosition.lat, currentPosition.lng, green.lat, green.lng);
   }
 
   function finaliseCommit() {
@@ -492,6 +623,34 @@
     }
     if (shots.length === 0) return;
     shots.pop();
+    render();
+    saveState();
+  }
+
+  function editShotDistance(shotIndex) {
+    const shot = shots[shotIndex];
+    if (shot.lie === "green") {
+      alert("Green shots don't have a distance-to-green value.");
+      return;
+    }
+    const current = shot.distanceToGreen !== null && shot.distanceToGreen !== undefined
+      ? shot.distanceToGreen
+      : "";
+    const input = prompt("Distance to green (yards) for shot " + shot.index + ":", current);
+    if (input === null) return;
+    const trimmed = input.trim();
+    if (trimmed === "") {
+      shot.distanceToGreen = null;
+      shot.distanceSource = null;
+    } else {
+      const num = parseInt(trimmed, 10);
+      if (isNaN(num) || num < 0 || num > 700) {
+        alert("Please enter a number between 0 and 700.");
+        return;
+      }
+      shot.distanceToGreen = num;
+      shot.distanceSource = "manual";
+    }
     render();
     saveState();
   }
@@ -595,8 +754,48 @@
   }
 
   function updateHoleHeader() {
-    document.getElementById("holeTitle").textContent =
-      "Hole " + currentHoleNumber + " — Par " + currentPar();
+    const distance = distanceToGreenYards();
+    let header = "Hole " + currentHoleNumber + " — Par " + currentPar();
+    if (distance !== null) {
+      header += " — " + Math.round(distance) + " yds to green";
+    }
+    document.getElementById("holeTitle").textContent = header;
+  }
+
+  function populateCourseDropdown() {
+    const dropdown = document.getElementById("courseDropdown");
+    dropdown.innerHTML = "";
+    const ids = Object.keys(COURSES);
+    for (let i = 0; i < ids.length; i++) {
+      const id = ids[i];
+      const option = document.createElement("option");
+      option.value = id;
+      option.textContent = COURSES[id].name;
+      dropdown.appendChild(option);
+    }
+    dropdown.value = currentCourseId;
+  }
+
+  function onCourseChange() {
+    const newCourseId = document.getElementById("courseDropdown").value;
+    if (completedHoles.length > 0 || shots.length > 0 || pendingShot) {
+      if (!confirm("Changing course will discard the current in-progress round. Continue?")) {
+        document.getElementById("courseDropdown").value = currentCourseId;
+        return;
+      }
+      currentHoleNumber = 1;
+      shots = [];
+      pendingShot = null;
+      completedHoles = [];
+      document.getElementById("goingForGreen").checked = false;
+      document.getElementById("gpsStatus").textContent = "";
+      resetActionArea();
+      render();
+      renderRound();
+    }
+    currentCourseId = newCourseId;
+    updateHoleHeader();
+    saveState();
   }
 
   function render() {
@@ -614,13 +813,27 @@
       const gpsText = shot.gps
         ? "[" + shot.gps.lat.toFixed(5) + ", " + shot.gps.lng.toFixed(5) + "]"
         : "no GPS";
+      const distText = shot.distanceToGreen !== null && shot.distanceToGreen !== undefined
+        ? shot.distanceToGreen + " yds" + (shot.distanceSource === "manual" ? " ✎" : "")
+        : shot.distanceBucket
+        ? shot.distanceBucket
+        : "—";
       item.textContent =
         label +
         " — lie: " + shot.lie +
         ", miss: " + shot.missDirection +
-        ", distance: " + shot.distanceBucket +
+        ", distance: " + distText +
         ", putts: " + shot.puttsTaken +
-        ", gps: " + gpsText;
+        ", gps: " + gpsText +
+        " ";
+
+      if (shot.lie !== "green") {
+        const editBtn = document.createElement("button");
+        editBtn.textContent = "Edit";
+        editBtn.onclick = (function(idx) { return function() { editShotDistance(idx); }; })(i);
+        item.appendChild(editBtn);
+      }
+
       list.appendChild(item);
     }
   }
@@ -797,11 +1010,16 @@
       const gpsText = shot.gps
         ? "[" + shot.gps.lat.toFixed(5) + ", " + shot.gps.lng.toFixed(5) + "]"
         : "no GPS";
+      const distText = shot.distanceToGreen !== null && shot.distanceToGreen !== undefined
+        ? shot.distanceToGreen + " yds"
+        : shot.distanceBucket
+        ? shot.distanceBucket
+        : "—";
       item.textContent =
         label +
         " — lie: " + shot.lie +
         ", miss: " + shot.missDirection +
-        ", distance: " + shot.distanceBucket +
+        ", distance: " + distText +
         ", putts: " + shot.puttsTaken +
         ", gps: " + gpsText;
       list.appendChild(item);
@@ -819,11 +1037,13 @@
   }
 
   loadState();
+  populateCourseDropdown();
   updateHoleHeader();
   render();
   renderRound();
   renderArchive();
   renderViewer();
+  startGPS();
 
   if ("serviceWorker" in navigator) {
   navigator.serviceWorker.register("service-worker.js")
