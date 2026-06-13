@@ -1,4 +1,4 @@
-const CACHE_NAME = "golf-logger-v2";
+const CACHE_NAME = "golf-logger-v3";
 const FILES_TO_CACHE = [
   "./",
   "./index.html",

@@ -3,7 +3,7 @@
 <head>
   <title>Golf Logger</title>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
   <link rel="manifest" href="manifest.json">
   <style>
     * {
@@ -160,10 +160,77 @@
       -webkit-appearance: menulist;
       appearance: menulist;
     }
+
+    #tabBar {
+      position: fixed;
+      bottom: 0;
+      left: 0;
+      right: 0;
+      display: flex;
+      background: white;
+      border-top: 1px solid #ddd;
+      box-shadow: 0 -1px 4px rgba(0,0,0,0.06);
+      z-index: 100;
+      padding-bottom: env(safe-area-inset-bottom);
+    }
+
+    #tabBar button {
+      flex: 1;
+      background: white;
+      color: #888;
+      border-radius: 0;
+      margin: 0;
+      padding: 14px 0;
+      font-size: 14px;
+      font-weight: 600;
+      min-width: 0;
+    }
+
+    #tabBar button:active {
+      background: #f0f0f0;
+    }
+
+    #tabBar button.activeTab {
+      color: #1e7a3c;
+      border-top: 3px solid #1e7a3c;
+      padding-top: 11px;
+    }
+
+    body {
+      padding-bottom: calc(80px + env(safe-area-inset-bottom));
+    }
+
+    .tabPanel {
+      display: none;
+    }
+
+    .tabPanel.activePanel {
+      display: block;
+    }
   </style>
 </head>
 <body>
 <h1>Golf Logger</h1>
+
+<div id="historyPanel" class="tabPanel">
+  <h2>History</h2>
+  <button onclick="exportRounds()">Export rounds</button>
+  <p id="archiveSummary">No rounds completed yet.</p>
+  <div id="viewerControls"></div>
+  <div id="viewerContent"></div>
+</div>
+
+<div id="statsPanel" class="tabPanel">
+<p>Stats coming once you've logged a few rounds.</p>
+</div>
+
+<div id="tabBar">
+  <button id="tabBtnRound" class="activeTab" onclick="showTab('round')">Round</button>
+  <button id="tabBtnHistory" onclick="showTab('history')">History</button>
+  <button id="tabBtnStats" onclick="showTab('stats')">Stats</button>
+</div>
+
+<div id="roundPanel" class="tabPanel activePanel">
 
 <div id="courseSelector">
   <label for="courseDropdown">Course: </label>
@@ -190,7 +257,6 @@
   <button onclick="finishHole()">Finish hole</button>
   <button onclick="backToPreviousHole()">Back to previous hole</button>
   <button onclick="completeRound()">Round complete</button>
-  <button onclick="exportRounds()">Export rounds</button>
   <button onclick="clearStoredRound()">Clear current round</button>
 </div>
 
@@ -203,19 +269,8 @@
 <h3>Round so far</h3>
 <ul id="roundList"></ul>
 
-<hr>
-
-<h3>Archived rounds</h3>
-<p id="archiveSummary">No rounds completed yet.</p>
-<ul id="archiveList"></ul>
-
-<hr>
-
-<div id="viewer">
-  <h3 id="viewerTitle">Viewer</h3>
-  <div id="viewerControls"></div>
-  <div id="viewerContent"></div>
 </div>
+
 
 <script>
   const COURSES = {
@@ -382,7 +437,6 @@
     resetActionArea();
     render();
     renderRound();
-    renderArchive();
     renderViewer();
   }
 
@@ -414,7 +468,7 @@
     if (!confirm("Really sure? Round " + round.roundNumber + " will be permanently deleted.")) return;
     roundHistory.splice(roundIndex, 1);
     saveHistory();
-    renderArchive();
+    renderViewer();
     viewerLevel = "rounds";
     viewerRoundIndex = null;
     viewerHoleIndex = null;
@@ -433,7 +487,8 @@
       distanceSource: d !== null ? "gps" : null,
       distanceBucket: null,
       puttsTaken: null,
-      goingForGreen: document.getElementById("goingForGreen").checked
+      goingForGreen: document.getElementById("goingForGreen").checked,
+      penalties: 0
     };
     showLieButtons();
   }
@@ -452,7 +507,7 @@
 
   function setLie(lie) {
     pendingShot.lie = lie;
-    const isTeeShot = pendingShot.index === 1;
+    const isTeeShot = lie === "tee";
     const needsMissDirection = isTeeShot || pendingShot.goingForGreen;
     if (needsMissDirection) showMissButtons();
     else afterMissStep();
@@ -655,6 +710,21 @@
     saveState();
   }
 
+  function editShotPenalty(shotIndex) {
+    const shot = shots[shotIndex];
+    const current = shot.penalties ? shot.penalties : 0;
+    const input = prompt("Penalty strokes on shot " + shot.index + " (0, 1, or 2):", current);
+    if (input === null) return;
+    const num = parseInt(input.trim(), 10);
+    if (isNaN(num) || num < 0 || num > 2) {
+      alert("Please enter 0, 1, or 2.");
+      return;
+    }
+    shot.penalties = num;
+    render();
+    saveState();
+  }
+
   function skipHole() {
     if (!confirm("Clear all shots for this hole and skip?")) return;
     completedHoles.push({
@@ -670,15 +740,18 @@
   function deriveHoleStats() {
     let score = 0;
     let putts = 0;
+    let penalties = 0;
     for (let i = 0; i < shots.length; i++) {
       const s = shots[i];
       const strokes = s.puttsTaken ? s.puttsTaken : 1;
       score += strokes;
+      penalties += s.penalties ? s.penalties : 0;
       if (s.lie === "green") putts += s.puttsTaken ? s.puttsTaken : 1;
     }
+    score += penalties;
     const par = currentPar();
     const GIR = (score - putts) <= (par - 2);
-    return { score: score, putts: putts, par: par, GIR: GIR };
+    return { score: score, putts: putts, par: par, GIR: GIR, penalties: penalties };
   }
 
   function finishHole() {
@@ -691,6 +764,7 @@
       "Hole " + currentHoleNumber + " (Par " + stats.par + ")\n" +
       "Score: " + stats.score + "\n" +
       "Putts: " + stats.putts + "\n" +
+      "Penalties: " + stats.penalties + "\n" +
       "GIR: " + (stats.GIR ? "yes" : "no") + "\n\n" +
       "Confirm and move to next hole?";
     if (!confirm(msg)) return;
@@ -818,12 +892,14 @@
         : shot.distanceBucket
         ? shot.distanceBucket
         : "—";
+      const penText = shot.penalties ? ", PEN: " + shot.penalties : "";
       item.textContent =
         label +
         " — lie: " + shot.lie +
         ", miss: " + shot.missDirection +
         ", distance: " + distText +
         ", putts: " + shot.puttsTaken +
+        penText +
         ", gps: " + gpsText +
         " ";
 
@@ -833,6 +909,11 @@
         editBtn.onclick = (function(idx) { return function() { editShotDistance(idx); }; })(i);
         item.appendChild(editBtn);
       }
+
+      const penBtn = document.createElement("button");
+      penBtn.textContent = "+ Pen";
+      penBtn.onclick = (function(idx) { return function() { editShotPenalty(idx); }; })(i);
+      item.appendChild(penBtn);
 
       list.appendChild(item);
     }
@@ -857,32 +938,6 @@
     }
   }
 
-  function renderArchive() {
-    const summary = document.getElementById("archiveSummary");
-    const list = document.getElementById("archiveList");
-    list.innerHTML = "";
-
-    if (roundHistory.length === 0) {
-      summary.textContent = "No rounds completed yet.";
-      return;
-    }
-    summary.textContent = roundHistory.length + " round(s) archived. Tap 'Export rounds' to download.";
-
-    for (let i = 0; i < roundHistory.length; i++) {
-      const r = roundHistory[i];
-      const item = document.createElement("li");
-      const date = new Date(r.completedAt).toLocaleString();
-      item.textContent = "Round " + r.roundNumber + " — " + r.holes.length + " holes — " + date + " ";
-
-      const delBtn = document.createElement("button");
-      delBtn.textContent = "Delete";
-      delBtn.onclick = (function(idx) { return function() { deleteArchivedRound(idx); }; })(i);
-      item.appendChild(delBtn);
-
-      list.appendChild(item);
-    }
-  }
-
   function renderViewer() {
     if (viewerLevel === "rounds") renderViewerRounds();
     else if (viewerLevel === "holes") renderViewerHoles();
@@ -890,25 +945,27 @@
   }
 
   function renderViewerRounds() {
-    const title = document.getElementById("viewerTitle");
+    const summary = document.getElementById("archiveSummary");
     const controls = document.getElementById("viewerControls");
     const content = document.getElementById("viewerContent");
-    title.textContent = "Viewer — Rounds";
     controls.innerHTML = "";
     content.innerHTML = "";
 
     if (roundHistory.length === 0) {
-      content.textContent = "No archived rounds to view.";
+      summary.textContent = "No rounds completed yet.";
       return;
     }
+    summary.textContent = roundHistory.length + " round(s) archived. Tap a round to view it.";
 
     const list = document.createElement("ul");
     for (let i = 0; i < roundHistory.length; i++) {
       const r = roundHistory[i];
       const totalScore = roundTotalScore(r);
+      const date = new Date(r.completedAt).toLocaleString();
       const item = document.createElement("li");
+
       const btn = document.createElement("button");
-      btn.textContent = "Round " + r.roundNumber + " — " + r.holes.length + " holes — total " + totalScore;
+      btn.textContent = "Round " + r.roundNumber + " — " + r.holes.length + " holes — total " + totalScore + " — " + date;
       btn.onclick = (function(idx) {
         return function() {
           viewerRoundIndex = idx;
@@ -917,17 +974,21 @@
         };
       })(i);
       item.appendChild(btn);
+
+      const delBtn = document.createElement("button");
+      delBtn.textContent = "Delete";
+      delBtn.onclick = (function(idx) { return function() { deleteArchivedRound(idx); }; })(i);
+      item.appendChild(delBtn);
+
       list.appendChild(item);
     }
     content.appendChild(list);
   }
 
   function renderViewerHoles() {
-    const title = document.getElementById("viewerTitle");
     const controls = document.getElementById("viewerControls");
     const content = document.getElementById("viewerContent");
     const r = roundHistory[viewerRoundIndex];
-    title.textContent = "Viewer — Round " + r.roundNumber;
     controls.innerHTML = "";
     content.innerHTML = "";
 
@@ -968,12 +1029,10 @@
   }
 
   function renderViewerShots() {
-    const title = document.getElementById("viewerTitle");
     const controls = document.getElementById("viewerControls");
     const content = document.getElementById("viewerContent");
     const r = roundHistory[viewerRoundIndex];
     const h = r.holes[viewerHoleIndex];
-    title.textContent = "Viewer — Round " + r.roundNumber + ", Hole " + h.holeNumber;
     controls.innerHTML = "";
     content.innerHTML = "";
 
@@ -1036,12 +1095,24 @@
     return total;
   }
 
+  function showTab(name) {
+    const panels = { round: "roundPanel", history: "historyPanel", stats: "statsPanel" };
+    const buttons = { round: "tabBtnRound", history: "tabBtnHistory", stats: "tabBtnStats" };
+    const keys = Object.keys(panels);
+    for (let i = 0; i < keys.length; i++) {
+      const k = keys[i];
+      document.getElementById(panels[k]).classList.remove("activePanel");
+      document.getElementById(buttons[k]).classList.remove("activeTab");
+    }
+    document.getElementById(panels[name]).classList.add("activePanel");
+    document.getElementById(buttons[name]).classList.add("activeTab");
+  }
+
   loadState();
   populateCourseDropdown();
   updateHoleHeader();
   render();
   renderRound();
-  renderArchive();
   renderViewer();
   startGPS();
 
